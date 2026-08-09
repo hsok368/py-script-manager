@@ -1,234 +1,165 @@
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
 import subprocess
-import threading
-import time
-import sys
-import psutil
-from telebot import TeleBot, types
-from pathlib import Path
-from datetime import datetime
+import signal
 
-# --- Configuration ---
-TOKEN = "8940684766:AAFO4v8oXiCaO-cRLujCOYpKv8kCp2A3v4s"
-BASE_DIR = Path("/home/ubuntu/py-script-manager")
-SCRIPTS_DIR = BASE_DIR / "scripts"
-LOGS_DIR = BASE_DIR / "logs"
-SCRIPTS_DIR.mkdir(exist_ok=True)
-LOGS_DIR.mkdir(exist_ok=True)
+# သင့် Bot Token ကို ဤနေရာတွင် ထည့်ပါ
+TOKEN = '8940684766:AAFO4v8oXiCaO-cRLujCOYpKv8kCp2A3v4s'
+bot = telebot.TeleBot(TOKEN)
 
-bot = TeleBot(TOKEN, parse_mode="HTML")
-active_processes = {} # {script_name: {"proc": Popen, "start_time": float}}
+# User တွေရဲ့ လည်ပတ်နေတဲ့ Process တွေကို သိမ်းထားမယ့် နေရာ (Dictionary)
+user_processes = {}
+# User တွေရဲ့ ဖိုင်တွေ သိမ်းဖို့ အဓိက Folder
+BASE_DIR = "hosted_bots"
 
-# --- Helpers ---
+if not os.path.exists(BASE_DIR):
+    os.makedirs(BASE_DIR)
 
-def get_sys_info():
-    return {
-        "cpu": psutil.cpu_percent(),
-        "ram": psutil.virtual_memory().percent,
-        "disk": psutil.disk_usage('/').percent,
-        "uptime": str(datetime.now() - datetime.fromtimestamp(psutil.boot_time())).split('.')[0]
-    }
+# User အလိုက် Folder တည်ဆောက်ပေးတဲ့ Function
+def get_user_dir(user_id):
+    user_dir = os.path.join(BASE_DIR, str(user_id))
+    if not os.path.exists(user_dir):
+        os.makedirs(user_dir)
+    return user_dir
 
-def get_status_icon(name):
-    if name not in active_processes:
-        return "🔴 Stopped"
-    proc = active_processes[name]["proc"]
-    if proc.poll() is None:
-        return "🟢 Running"
-    return "⚠️ Error/Exited"
-
-def get_main_keyboard():
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+# ခလုတ်များ (Inline Keyboard) ဖန်တီးပေးတဲ့ Function
+def main_menu_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 2
     markup.add(
-        types.KeyboardButton("📁 My Scripts"),
-        types.KeyboardButton("📊 System Status"),
-        types.KeyboardButton("📦 Install Requirements"),
-        types.KeyboardButton("❓ Help & Info")
+        InlineKeyboardButton("▶️ Start Bot", callback_data="start_bot"),
+        InlineKeyboardButton("⏹ Stop Bot", callback_data="stop_bot")
+    )
+    markup.add(
+        InlineKeyboardButton("📜 View Logs/Errors", callback_data="view_logs"),
+        InlineKeyboardButton("🗑 Delete File", callback_data="delete_file")
+    )
+    markup.add(
+        InlineKeyboardButton("📦 Install Requirements", callback_data="install_req")
     )
     return markup
 
-# --- Handlers ---
-
+# /start ကို နှိပ်တဲ့အခါ
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     welcome_text = (
-        "<b>🚀 Welcome to Python Hosting Pro</b>\n"
-        "───────────────────────\n"
-        "Professional Python script hosting dashboard via Telegram.\n\n"
-        "<b>✨ Features:</b>\n"
-        "• High-Performance Hosting\n"
-        • Real-time Log Streaming\n"
-        "• Dynamic Dependency Management\n"
-        "• System Resource Monitoring\n\n"
-        "<i>Send a .py file to get started!</i>"
+        "👋 **Hosting Bot မှ ကြိုဆိုပါတယ်!**\n\n"
+        "1️⃣ သင့်ရဲ့ Python code (`.py` file) ကို ဒီကို ပို့ပေးပါ။\n"
+        "2️⃣ လိုအပ်တဲ့ libraries တွေရှိရင် `requirements.txt` ကိုပါ ပို့ပေးပါ။\n\n"
+        "အောက်ပါခလုတ်များဖြင့် သင့် Bot ကို အလွယ်တကူ ထိန်းချုပ်နိုင်ပါတယ်။"
     )
-    bot.send_message(message.chat.id, welcome_text, reply_markup=get_main_keyboard())
+    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
 
-@bot.message_handler(func=lambda m: m.text == "📁 My Scripts")
-def cmd_list_scripts(message):
-    files = [f for f in os.listdir(SCRIPTS_DIR) if f.endswith('.py')]
-    if not files:
-        bot.reply_to(message, "<b>📁 No scripts found.</b>\nPlease upload a <code>.py</code> file first.")
-        return
-
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for f in files:
-        status = get_status_icon(f)
-        markup.add(types.InlineKeyboardButton(f"{status} | {f}", callback_data=f"manage_{f}"))
-    
-    bot.send_message(message.chat.id, "<b>📂 Script Manager Dashboard</b>\nSelect a script to manage its state:", reply_markup=markup)
-
-@bot.message_handler(func=lambda m: m.text == "📊 System Status")
-def cmd_sys_status(message):
-    info = get_sys_info()
-    status_text = (
-        "<b>📊 Server Resource Status</b>\n"
-        "───────────────────────\n"
-        f"<b>🖥 CPU Usage:</b> <code>{info['cpu']}%</code>\n"
-        f"<b>💾 RAM Usage:</b> <code>{info['ram']}%</code>\n"
-        f"<b>💽 Disk Space:</b> <code>{info['disk']}%</code>\n"
-        f"<b>⏱ Uptime:</b> <code>{info['uptime']}</code>\n"
-        "───────────────────────\n"
-        "<i>Status updated in real-time.</i>"
-    )
-    bot.send_message(message.chat.id, status_text)
-
-@bot.message_handler(func=lambda m: m.text == "📦 Install Requirements")
-def cmd_install_req(message):
-    req_file = SCRIPTS_DIR / "requirements.txt"
-    if not req_file.exists():
-        bot.reply_to(message, "❌ <b>requirements.txt not found.</b>\nPlease upload your requirements file first.")
-        return
-    
-    msg = bot.reply_to(message, "⏳ <b>Starting dynamic installation...</b>")
-    
-    def run_install():
-        try:
-            process = subprocess.Popen(
-                [sys.executable, "-m", "pip", "install", "-r", str(req_file)],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-            )
-            stdout, _ = process.communicate()
-            bot.edit_message_text(f"✅ <b>Installation Complete!</b>\n<pre>{stdout[-1500:]}</pre>", message.chat.id, msg.message_id)
-        except Exception as e:
-            bot.edit_message_text(f"❌ <b>Installation Failed:</b> {str(e)}", message.chat.id, msg.message_id)
-
-    threading.Thread(target=run_install).start()
-
-@bot.message_handler(func=lambda m: m.text == "❓ Help & Info")
-def cmd_help(message):
-    help_text = (
-        "<b>💡 Pro Hosting Bot Guide</b>\n"
-        "───────────────────────\n"
-        "<b>1. Upload:</b> Send any <code>.py</code> file to the bot.\n"
-        "<b>2. Manage:</b> Use 📁 <b>My Scripts</b> to Start/Stop/Delete.\n"
-        "<b>3. Logs:</b> Check 📜 <b>View Logs</b> for debugging.\n"
-        "<b>4. Deps:</b> Upload <code>requirements.txt</code> and click 📦 <b>Install</b>.\n"
-        "───────────────────────\n"
-        "<i>Powered by Python Hosting Pro</i>"
-    )
-    bot.send_message(message.chat.id, help_text)
-
+# ဖိုင်များ (Documents) လက်ခံတဲ့အခါ
 @bot.message_handler(content_types=['document'])
-def handle_document(message):
-    if message.document.file_name.endswith(('.py', '.txt')):
+def handle_docs(message):
+    try:
+        user_id = message.from_user.id
+        user_dir = get_user_dir(user_id)
+        
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        file_path = SCRIPTS_DIR / message.document.file_name
-        with open(file_path, 'wb') as new_file:
-            new_file.write(downloaded_file)
+        file_name = message.document.file_name
         
-        bot.reply_to(message, f"✅ <b>File Received:</b> <code>{message.document.file_name}</code>\nManagement is now available in the dashboard.")
-    else:
-        bot.reply_to(message, "❌ <b>Unsupported Format.</b>\nPlease send only <code>.py</code> or <code>.txt</code> files.")
-
-@bot.callback_query_handler(func=lambda call: True)
-def handle_query(call):
-    chat_id = call.message.chat.id
-    msg_id = call.message.message_id
-
-    if call.data.startswith("manage_"):
-        name = call.data.replace("manage_", "")
-        status = get_status_icon(name)
-        
-        text = (
-            f"<b>🛠 Script Management:</b> <code>{name}</code>\n"
-            "───────────────────────\n"
-            f"<b>Current Status:</b> {status}\n"
-            "───────────────────────"
-        )
-        
-        markup = types.InlineKeyboardMarkup()
-        is_running = name in active_processes and active_processes[name]["proc"].poll() is None
-        
-        if is_running:
-            markup.row(types.InlineKeyboardButton("🛑 Stop", callback_data=f"stop_{name}"),
-                       types.InlineKeyboardButton("🔄 Restart", callback_data=f"restart_{name}"))
-        else:
-            markup.row(types.InlineKeyboardButton("▶️ Start Script", callback_data=f"start_{name}"))
+        if file_name.endswith('.py') or file_name == 'requirements.txt':
+            file_path = os.path.join(user_dir, file_name)
             
-        markup.row(types.InlineKeyboardButton("📜 View Live Logs", callback_data=f"logs_{name}"))
-        markup.row(types.InlineKeyboardButton("🗑 Delete Permanent", callback_data=f"delete_{name}"))
-        markup.row(types.InlineKeyboardButton("⬅️ Back to List", callback_data="back_to_list"))
-        
-        bot.edit_message_text(text, chat_id, msg_id, reply_markup=markup)
-
-    elif call.data.startswith("start_"):
-        name = call.data.replace("start_", "")
-        log_path = LOGS_DIR / f"{name}.log"
-        log_file = open(log_path, "a")
-        
-        proc = subprocess.Popen(
-            [sys.executable, str(SCRIPTS_DIR / name)],
-            stdout=log_file, stderr=subprocess.STDOUT, text=True, cwd=str(SCRIPTS_DIR)
-        )
-        active_processes[name] = {"proc": proc, "start_time": time.time()}
-        bot.answer_callback_query(call.id, f"🚀 {name} is now online!")
-        handle_query(types.CallbackQuery(call.id, call.from_user, f"manage_{name}", call.chat_instance, call.message))
-
-    elif call.data.startswith("stop_"):
-        name = call.data.replace("stop_", "")
-        if name in active_processes:
-            active_processes[name]["proc"].terminate()
-            del active_processes[name]
-            bot.answer_callback_query(call.id, f"🛑 {name} has been stopped.")
-        handle_query(types.CallbackQuery(call.id, call.from_user, f"manage_{name}", call.chat_instance, call.message))
-
-    elif call.data.startswith("restart_"):
-        name = call.data.replace("restart_", "")
-        if name in active_processes:
-            active_processes[name]["proc"].terminate()
-        time.sleep(1)
-        handle_query(types.CallbackQuery(call.id, call.from_user, f"start_{name}", call.chat_instance, call.message))
-
-    elif call.data.startswith("logs_"):
-        name = call.data.replace("logs_", "")
-        log_path = LOGS_DIR / f"{name}.log"
-        if log_path.exists():
-            with open(log_path, "r") as f:
-                logs = f.read()[-2000:]
-            bot.send_message(chat_id, f"<b>📜 Logs for {name}:</b>\n<pre>{logs if logs else '(No output yet)'}</pre>")
+            with open(file_path, 'wb') as new_file:
+                new_file.write(downloaded_file)
+                
+            bot.reply_to(message, f"✅ `{file_name}` ဖိုင်ကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။\nအောက်ပါခလုတ်များဖြင့် ထိန်းချုပ်ပါ။", 
+                         reply_markup=main_menu_keyboard(), parse_mode="Markdown")
         else:
-            bot.answer_callback_query(call.id, "No logs available.")
+            bot.reply_to(message, "❌ ကျေးဇူးပြု၍ `.py` ဖိုင် သို့မဟုတ် `requirements.txt` ကိုသာ ပို့ပေးပါ။")
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ ဖိုင်သိမ်းဆည်းရာတွင် အမှားအယွင်းဖြစ်နေပါသည်: {e}")
 
-    elif call.data.startswith("delete_"):
-        name = call.data.replace("delete_", "")
-        if name in active_processes:
-            active_processes[name]["proc"].terminate()
-            del active_processes[name]
-        (SCRIPTS_DIR / name).unlink(missing_ok=True)
-        bot.answer_callback_query(call.id, f"🗑 {name} deleted.")
-        cmd_list_scripts(call.message)
+# ခလုတ်တွေကို နှိပ်တဲ့အခါ အလုပ်လုပ်မယ့် အပိုင်း (Callback Queries)
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    user_id = call.from_user.id
+    user_dir = get_user_dir(user_id)
+    bot_file = None
+    
+    # ယူဆချက်အနေနဲ့ အရင်ဆုံးရောက်လာတဲ့ .py ကို အဓိက Run မယ့်ဖိုင်လို့ သတ်မှတ်ပါမယ်
+    if os.path.exists(user_dir):
+        for file in os.listdir(user_dir):
+            if file.endswith('.py'):
+                bot_file = os.path.join(user_dir, file)
+                break
+            
+    log_file = os.path.join(user_dir, "output.log")
 
-    elif call.data == "back_to_list":
-        files = [f for f in os.listdir(SCRIPTS_DIR) if f.endswith('.py')]
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for f in files:
-            status = get_status_icon(f)
-            markup.add(types.InlineKeyboardButton(f"{status} | {f}", callback_data=f"manage_{f}"))
-        bot.edit_message_text("<b>📂 Script Manager Dashboard</b>\nSelect a script to manage its state:", chat_id, msg_id, reply_markup=markup)
+    if call.data == "start_bot":
+        if bot_file:
+            if user_id in user_processes and user_processes[user_id].poll() is None:
+                bot.answer_callback_query(call.id, "⚠️ သင့် Bot မှာ လည်ပတ်နေဆဲ ဖြစ်ပါတယ်။", show_alert=True)
+            else:
+                try:
+                    # Logs နဲ့ Error တွေကို log file ထဲ သိမ်းမယ်
+                    f = open(log_file, "w")
+                    process = subprocess.Popen(['python3', bot_file], stdout=f, stderr=subprocess.STDOUT)
+                    user_processes[user_id] = process
+                    bot.answer_callback_query(call.id, "▶️ Bot ကို စတင်လိုက်ပါပြီ။")
+                    bot.send_message(user_id, "✅ သင့် Bot ကို အောင်မြင်စွာ Run လိုက်ပါပြီ။ Logs များကို စစ်ဆေးနိုင်ပါတယ်။")
+                except Exception as e:
+                    bot.send_message(user_id, f"❌ Run ရာတွင် အမှားအယွင်းဖြစ်နေပါသည်: {e}")
+        else:
+            bot.answer_callback_query(call.id, "❌ Run ရန် .py ဖိုင် မတွေ့ပါ။", show_alert=True)
 
+    elif call.data == "stop_bot":
+        if user_id in user_processes and user_processes[user_id].poll() is None:
+            user_processes[user_id].terminate() # သို့မဟုတ် .kill()
+            bot.answer_callback_query(call.id, "⏹ Bot ကို ရပ်တန့်လိုက်ပါပြီ။")
+            bot.send_message(user_id, "⏹ သင့် Bot ကို ရပ်တန့်လိုက်ပါပြီ။")
+        else:
+            bot.answer_callback_query(call.id, "⚠️ ရပ်တန့်ရန် Bot လည်ပတ်နေခြင်း မရှိပါ။", show_alert=True)
+
+    elif call.data == "view_logs":
+        if os.path.exists(log_file):
+            with open(log_file, "r") as f:
+                logs = f.read()
+                if logs:
+                    # Message အရမ်းရှည်ရင် နောက်ဆုံး စာလုံးရေ 4000 ကိုပဲ ပြမယ်
+                    bot.send_message(user_id, f"📜 **Logs / Errors:**\n```python\n{logs[-4000:]}\n```", parse_mode="Markdown")
+                else:
+                    bot.answer_callback_query(call.id, "Logs များ မရှိသေးပါ။", show_alert=True)
+        else:
+            bot.answer_callback_query(call.id, "Logs ဖိုင် မတွေ့ပါ။", show_alert=True)
+
+    elif call.data == "delete_file":
+        # အရင်ဆုံး Process ကို ရပ်ပါမယ်
+        if user_id in user_processes and user_processes[user_id].poll() is None:
+            user_processes[user_id].terminate()
+            
+        # ဖိုင်တွေအကုန်ဖျက်ပါမယ်
+        if os.path.exists(user_dir):
+            for file in os.listdir(user_dir):
+                os.remove(os.path.join(user_dir, file))
+            
+        bot.answer_callback_query(call.id, "🗑 ဖိုင်များကို ဖျက်လိုက်ပါပြီ။")
+        bot.send_message(user_id, "🗑 သင့်ဖိုင်များကို အောင်မြင်စွာ ဖျက်ပစ်လိုက်ပါပြီ။")
+
+    elif call.data == "install_req":
+        req_file = os.path.join(user_dir, 'requirements.txt')
+        if os.path.exists(req_file):
+            bot.send_message(user_id, "⏳ Libraries များကို Install လုပ်နေပါသည်။ ခဏစောင့်ပါ...")
+            try:
+                # pip install ကို လှမ်း Run ခြင်း
+                result = subprocess.run(['pip3', 'install', '-r', req_file], capture_output=True, text=True)
+                if result.returncode == 0:
+                    bot.send_message(user_id, "✅ လိုအပ်သော Libraries များ Install လုပ်ခြင်း အောင်မြင်ပါသည်။")
+                else:
+                    bot.send_message(user_id, f"❌ Install လုပ်ရာတွင် Error ဖြစ်နေပါသည်:\n```\n{result.stderr}\n```", parse_mode="Markdown")
+            except Exception as e:
+                bot.send_message(user_id, f"❌ အမှားအယွင်းဖြစ်နေပါသည်: {e}")
+        else:
+            bot.answer_callback_query(call.id, "❌ requirements.txt ဖိုင် မတွေ့ပါ။", show_alert=True)
+
+# Bot ကို 24 နာရီ လည်ပတ်စေခြင်း
 if __name__ == "__main__":
-    print("Python Hosting Pro is starting...")
+    print("Hosting Bot is running...")
     bot.infinity_polling()
