@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Python Script Manager</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+</head>
+<body>
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <i class="fa-brands fa-python"></i>
+      <span>ScriptManager</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-view="dashboard">
+        <i class="fa-solid fa-gauge-high"></i> Dashboard
+      </a>
+      <a href="#" class="nav-item" data-view="scripts">
+        <i class="fa-solid fa-file-code"></i> Scripts
+      </a>
+      <a href="#" class="nav-item" data-view="logs">
+        <i class="fa-solid fa-terminal"></i> Logs
+      </a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sys-stats" id="sysStats">
+        <div class="stat-row"><span>CPU</span><div class="bar-wrap"><div class="bar" id="cpuBar"></div></div><span id="cpuVal">--</span></div>
+        <div class="stat-row"><span>RAM</span><div class="bar-wrap"><div class="bar" id="ramBar"></div></div><span id="ramVal">--</span></div>
+        <div class="stat-row"><span>Disk</span><div class="bar-wrap"><div class="bar" id="diskBar"></div></div><span id="diskVal">--</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main Content ── -->
+  <main class="main">
+    <!-- Top Bar -->
+    <header class="topbar">
+      <h1 id="pageTitle">Dashboard</h1>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" id="uploadBtn">
+          <i class="fa-solid fa-upload"></i> Upload Script
+        </button>
+      </div>
+    </header>
+
+    <!-- Dashboard View -->
+    <section id="view-dashboard" class="view active">
+      <div class="cards-grid" id="statsCards">
+        <div class="card stat-card">
+          <i class="fa-solid fa-circle-play card-icon green"></i>
+          <div><div class="card-val" id="countRunning">0</div><div class="card-label">Running</div></div>
+        </div>
+        <div class="card stat-card">
+          <i class="fa-solid fa-circle-stop card-icon gray"></i>
+          <div><div class="card-val" id="countStopped">0</div><div class="card-label">Stopped</div></div>
+        </div>
+        <div class="card stat-card">
+          <i class="fa-solid fa-circle-exclamation card-icon red"></i>
+          <div><div class="card-val" id="countError">0</div><div class="card-label">Error</div></div>
+        </div>
+        <div class="card stat-card">
+          <i class="fa-solid fa-file-code card-icon blue"></i>
+          <div><div class="card-val" id="countTotal">0</div><div class="card-label">Total Scripts</div></div>
+        </div>
+      </div>
+      <div class="section-title">All Scripts</div>
+      <div id="scriptCards" class="script-grid"></div>
+    </section>
+
+    <!-- Scripts View -->
+    <section id="view-scripts" class="view">
+      <div class="section-title">Manage Scripts</div>
+      <div id="scriptTable" class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th>Status</th><th>PID</th><th>Started</th><th>Size</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="scriptTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Logs View -->
+    <section id="view-logs" class="view">
+      <div class="log-header">
+        <div class="section-title">Live Logs</div>
+        <div class="log-controls">
+          <select id="logScriptSelect"><option value="">-- Select Script --</option></select>
+          <button class="btn btn-sm" id="clearLogBtn"><i class="fa-solid fa-trash"></i> Clear</button>
+          <button class="btn btn-sm" id="scrollBottomBtn"><i class="fa-solid fa-angles-down"></i> Bottom</button>
+        </div>
+      </div>
+      <div class="log-panel" id="logPanel"><span class="log-placeholder">Select a script to view logs...</span></div>
+    </section>
+  </main>
+
+  <!-- ── Upload Modal ── -->
+  <div class="modal-overlay" id="uploadModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-upload"></i> Upload Script</h2>
+        <button class="modal-close" id="closeUpload">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="drop-zone" id="dropZone">
+          <i class="fa-solid fa-file-arrow-up"></i>
+          <p>Drag & drop a <strong>.py</strong> or <strong>requirements.txt</strong> file here</p>
+          <p>or</p>
+          <label class="btn btn-primary" for="fileInput">Browse File</label>
+          <input type="file" id="fileInput" accept=".py,.txt" hidden />
+        </div>
+        <div id="uploadStatus" class="upload-status"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Edit Modal ── -->
+  <div class="modal-overlay" id="editModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-pen-to-square"></i> Edit: <span id="editModalTitle"></span></h2>
+        <button class="modal-close" id="closeEdit">&times;</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="codeEditor" spellcheck="false"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="closeEdit2">Cancel</button>
+        <button class="btn btn-primary" id="saveScript"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Confirm Modal ── -->
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2 id="confirmTitle">Confirm</h2>
+        <button class="modal-close" id="closeConfirm">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmMsg"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="confirmNo">Cancel</button>
+        <button class="btn btn-danger" id="confirmYes">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Toast ── -->
+  <div id="toastContainer"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
